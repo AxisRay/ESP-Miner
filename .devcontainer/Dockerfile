@@ -1,6 +1,15 @@
-FROM espressif/idf
+FROM espressif/idf:release-v5.1
 
 ARG DEBIAN_FRONTEND=nointeractive
+
+# Proxy
+ENV https_proxy=http://host.docker.internal:7890
+ENV http_proxy=http://host.docker.internal:7890
+ENV all_proxy=socks5://host.docker.internal:7890
+
+# Install Node.js 20.x
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get install -y nodejs
 
 RUN apt-get update \
   && apt install -y -q \
