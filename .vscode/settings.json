@@ -15,7 +15,8 @@
         "array": "c",
         "string": "c",
         "string_view": "c",
-        "*.tcc": "c"
+        "*.tcc": "c",
+        "esp_tls.h": "c"
     },
     "editor.formatOnSave": true,
     "cSpell.words": [
