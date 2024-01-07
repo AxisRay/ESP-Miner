@@ -24,13 +24,16 @@ char * nvs_config_get_string(const char * key, const char * default_value)
     }
 
     char * out = malloc(size);
+    if (out != NULL) {
+        memset(out, 0, size);
+    }
     err = nvs_get_str(handle, key, out, &size);
 
     if (err != ESP_OK) {
         free(out);
         return strdup(default_value);
     }
-
+    // ESP_LOGI(TAG, "Read nvs key: %s, value: %s, size: %d, len: %d", key, out, size, strlen(out));
     nvs_close(handle);
     return out;
 }

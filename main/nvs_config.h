@@ -8,6 +8,8 @@
 #define NVS_CONFIG_WIFI_SSID "wifissid"
 #define NVS_CONFIG_WIFI_PASS "wifipass"
 #define NVS_CONFIG_STRATUM_URL "stratumurl"
+#define NVS_CONFIG_STRATUM_TLS "stratumtls"
+#define NVS_CONFIG_STRATUM_CERT "stratumcert"
 #define NVS_CONFIG_STRATUM_PORT "stratumport"
 #define NVS_CONFIG_STRATUM_USER "stratumuser"
 #define NVS_CONFIG_STRATUM_PASS "stratumpass"

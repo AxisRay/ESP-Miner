@@ -2,7 +2,7 @@ FROM espressif/idf:release-v5.1
 
 ARG DEBIAN_FRONTEND=nointeractive
 
-# Proxy
+# # Proxy
 ENV https_proxy=http://host.docker.internal:7890
 ENV http_proxy=http://host.docker.internal:7890
 ENV all_proxy=socks5://host.docker.internal:7890

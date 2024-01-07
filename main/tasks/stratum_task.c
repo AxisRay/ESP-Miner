@@ -30,6 +30,50 @@ void dns_found_cb(const char * name, const ip_addr_t * ipaddr, void * callback_a
     ip_Addr = *ipaddr;
     bDNSFound = true;
 }
+int stratum_tcp_connect(stratum_socket *sock, char *host_ip, uint16_t port)
+{
+    int addr_family = 0;
+    int ip_protocol = 0;
+
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = inet_addr(host_ip);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(port);
+    addr_family = AF_INET;
+    ip_protocol = IPPROTO_IP;
+
+    sock->is_tls = false;
+    sock->tcp_socket = socket(addr_family, SOCK_STREAM, ip_protocol);
+    if (sock->tcp_socket < 0) {
+        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        return -1;
+    }
+    ESP_LOGI(TAG, "Socket created, connecting to %s:%d", host_ip, port);
+
+    int err = connect(sock->tcp_socket, (struct sockaddr *) &dest_addr, sizeof(struct sockaddr_in6));
+    if (err != 0) {
+        ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
+        return err;
+    }
+    return 0;
+}
+int stratum_tls_connect(stratum_socket *sock, char *hostname, uint16_t port, esp_tls_cfg_t *cfg)
+{
+    sock->is_tls = true;
+    sock->tls_socket = esp_tls_init();
+    if (sock->tls_socket == NULL) {
+        ESP_LOGE(TAG, "Unable to create TLS socket");
+        return -1;
+    }
+    ESP_LOGI(TAG, "TLS Socket created, connecting to %s:%d", hostname, port);
+
+    int err = esp_tls_conn_new_sync(hostname, strlen(hostname), port, cfg, sock->tls_socket);
+    if (err != 1) {
+        ESP_LOGE(TAG, "TLS Socket unable to connect: errno %d", errno);
+        return err;
+    }
+    return 0;
+}
 
 void stratum_task(void * pvParameters)
 {
@@ -42,11 +86,15 @@ void stratum_task(void * pvParameters)
 
     char * stratum_url = nvs_config_get_string(NVS_CONFIG_STRATUM_URL, STRATUM_URL);
     uint16_t port = nvs_config_get_u16(NVS_CONFIG_STRATUM_PORT, PORT);
+    uint8_t is_tls = nvs_config_get_u16(NVS_CONFIG_STRATUM_TLS, false);
+    char *stratum_cert = nvs_config_get_string(NVS_CONFIG_STRATUM_CERT, NULL);
 
     // check to see if the STRATUM_URL is an ip address already
     if (inet_pton(AF_INET, stratum_url, &ip_Addr) == 1) {
         bDNSFound = true;
-    } else {
+    }
+    else
+    {        
         // it's a hostname. Lookup the ip address.
         IP_ADDR4(&ip_Addr, 0, 0, 0, 0);
         ESP_LOGI(TAG, "Get IP for URL: %s\n", stratum_url);
@@ -59,84 +107,35 @@ void stratum_task(void * pvParameters)
     snprintf(host_ip, sizeof(host_ip), "%d.%d.%d.%d", ip4_addr1(&ip_Addr.u_addr.ip4), ip4_addr2(&ip_Addr.u_addr.ip4),
              ip4_addr3(&ip_Addr.u_addr.ip4), ip4_addr4(&ip_Addr.u_addr.ip4));
     ESP_LOGI(TAG, "Connecting to: stratum+tcp://%s:%d (%s)\n", stratum_url, port, host_ip);
-    free(stratum_url);
+    //free(stratum_url);
 
-    while (1) {
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_addr.s_addr = inet_addr(host_ip);
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_port = htons(port);
-        addr_family = AF_INET;
-        ip_protocol = IPPROTO_IP;
-        const char * cacert = "-----BEGIN CERTIFICATE-----\n"
-                              "MIIFRTCCAy0CFFFxcvrekK6XbdDPEch5nazNtPM+MA0GCSqGSIb3DQEBCwUAMF8x\n"
-                              "CzAJBgNVBAYTAkNOMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRl\n"
-                              "cm5ldCBXaWRnaXRzIFB0eSBMdGQxGDAWBgNVBAMMD2F6dXJlLnJheWNuLnB1YjAe\n"
-                              "Fw0yNDAxMDUwOTQ2NThaFw0yNTAxMDQwOTQ2NThaMF8xCzAJBgNVBAYTAkNOMRMw\n"
-                              "EQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBXaWRnaXRzIFB0\n"
-                              "eSBMdGQxGDAWBgNVBAMMD2F6dXJlLnJheWNuLnB1YjCCAiIwDQYJKoZIhvcNAQEB\n"
-                              "BQADggIPADCCAgoCggIBAKIGneApDpH/n56qlfbkVmllRV2A/WegX3GcRFgzkK95\n"
-                              "/w+ieA/r2b8+VrP2Bo5d+GDRGQlNsT6mbtf++mGpHvsDsC1kW7Nq4DJW4v1GtUU0\n"
-                              "4CMubRsI0Pr7tF3MW1ALfHjBrRwhBMaBgFQ75rEWkxT0LDz+ZOPo02kjEApuTEIb\n"
-                              "COisy8ffkqO2hxoxks5ADG3AIrVdQthJLtrStegmSgsSSmXyqKstGVv3JTnnhTSn\n"
-                              "xf47x33e95uNEIHd8J7Dt+pyGicBIn3T2mdao/u73Xf1BnBcKgmMWlxvfWY/V0gF\n"
-                              "tG0rZJE1qJxPEBZ/JPcDozIEWSJeMaGWV4OHfqhXGXGG21OHLfGf1x2TaKC/VgQY\n"
-                              "mYPMOwIMASbXeYPMGoAejsdyiS2TUQFa9h8tz6YEF7vpD7qmMwasLGEsIP9YIgi6\n"
-                              "KH95xYmrU6LSBW4H1muCiMQ6CDKCigdhsLcdZ2QSwzLymr5nIXk+bukV6o8ZLDBw\n"
-                              "w6HtF4HNypDuODMDcXqNL7sz4IFtE3MsY+KJek4dpWX+T+CPloncPC5xQ6VH5cqf\n"
-                              "/rIpW3d4kXYtox4/WL2DgIXyKNPlWrjohlHVovvhiJOF0cLZU03hMQSxh8S2l38e\n"
-                              "BtA+tls2zfgzSHhBdE/81XzKiv4+6w4z+reFUWUPek8dIeTwk9L/Ea/T0stqFBrl\n"
-                              "AgMBAAEwDQYJKoZIhvcNAQELBQADggIBADj/pB4X134HgCFiv6dJVkAk/k+P9+8q\n"
-                              "iXOtznt41CfF7n9bQF9Pm5zz6FCIZGbrW5jQXP36CWk0HI1KCKpx5/ay/KU9YSXM\n"
-                              "VUukegj7X+y+15HfeUHdVdzPVjYn8jC2FIHQy172AJWXwFH1B4qFpabH0E2EOvDm\n"
-                              "xeFNqRBwmBARmPl+U7z0TmHpKHh7M2P777/wvCkEPUU6LSERTudYw7ABduK1KdUr\n"
-                              "XqqQbEUQ+aPSwjjgU0mmIZEruk5255SwxAu0zLurLF+Ol1Wig4e+VUgiItgkFi57\n"
-                              "1OmI7GBFS64gq7+VZYvxqkbrDMaQpzP8URM71Em/sRuO8SWWPXpiTL25Xy5XssGA\n"
-                              "Xfdh+YAWE6R21QCKfFjN7coUJnrVInQrswnaUf4DIjwWcQyARSTsGDLYoG0umJNt\n"
-                              "Hzj5j3gbioLqVm0oxD8bXoUlJBT4e1499nFRBHlx+wXEh87lgWK1ia6sMLMqFNM6\n"
-                              "luHvPelkXBcRLJX1kBNNWs7LtafyXra2dc6OMr+LEIhdmmXrGwWpvUqJC9AS7aV8\n"
-                              "KAfgrrEiwVugtrx+Dij1cA6YivU7a8mI0G6A4f2g3pzWdWKqaLIWqs0PTZlYX46+\n"
-                              "8A6X03KucLVy1R/LyC0Gq8GUUSAYgq87Yl0YSJ9L5jAgxSUJFoFyxKix/mA5WY20\n"
-                              "JT/36mkeABZF\n"
-                              "-----END CERTIFICATE-----"; // Set to your CA certificate if required
-
-        // Create a TLS context
-        esp_tls_cfg_t tls_cfg = {
-            .cacert_buf = cacert, // Set to your CA certificate if required
-            .cacert_bytes =,      // Set to the size of your CA certificate if required
-        };
-        esp_tls_t * tls = esp_tls_init();
-        if (tls == NULL) {
-            ESP_LOGE(TAG, "Failed to initialize TLS");
-            esp_restart();
-            break;
+    while (1)
+    {
+        if (is_tls) {
+            esp_tls_cfg_t cfg = {
+                .cacert_pem_buf = (const unsigned char *) stratum_cert,
+                .cacert_pem_bytes = strlen(stratum_cert) + 1,
+            };
+            ESP_LOGI(TAG, "TLS cert: %s", stratum_cert);
+            ESP_LOGI(TAG, "TLS cert length: %d", strlen(stratum_cert) + 1);
+            int err = stratum_tls_connect(&GLOBAL_STATE->sock, stratum_url, port, &cfg);
+            if (err != 0)
+            {
+                ESP_LOGE(TAG, "TLS Socket unable to connect: errno %d", errno);
+                esp_restart();
+                break;
+            }
         }
-        // Establish a TLS connection
-        int ret = esp_tls_conn_new_sync(host_ip, port, AF_INET, &tls_cfg, tls);
-        if (ret != 0) {
-            ESP_LOGE(TAG, "Failed to establish TLS connection: %d", ret);
-            esp_tls_cleanup(tls);
-            esp_restart();
-            break;
+        else
+        {
+            int err = stratum_tcp_connect(&GLOBAL_STATE->sock, host_ip, port);
+            if (err != 0)
+            {
+                ESP_LOGE(TAG, "TCP Socket unable to connect: errno %d", errno);
+                esp_restart();
+                break;
+            }
         }
-        // Use the TLS connection for further communication
-        GLOBAL_STATE->sock = esp_tls_get_fd(tls);
-
-        // GLOBAL_STATE->sock = socket(addr_family, SOCK_STREAM, ip_protocol);
-
-        if (GLOBAL_STATE->sock < 0) {
-            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-            esp_restart();
-            break;
-        }
-        ESP_LOGI(TAG, "Socket created, connecting to %s:%d", host_ip, port);
-
-        // int err = connect(GLOBAL_STATE->sock, (struct sockaddr *) &dest_addr, sizeof(struct sockaddr_in6));
-        // if (err != 0) {
-        //     ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
-        //     esp_restart();
-        //     break;
-        // }
 
         STRATUM_V1_subscribe(GLOBAL_STATE->sock, &GLOBAL_STATE->extranonce_str, &GLOBAL_STATE->extranonce_2_len,
                              GLOBAL_STATE->asic_model);
@@ -152,8 +151,9 @@ void stratum_task(void * pvParameters)
 
         STRATUM_V1_suggest_difficulty(GLOBAL_STATE->sock, STRATUM_DIFFICULTY);
 
-        while (1) {
-            char * line = STRATUM_V1_receive_jsonrpc_line(GLOBAL_STATE->sock);
+        while (1) 
+        {
+            char *line = STRATUM_V1_receive_jsonrpc_line(GLOBAL_STATE->sock);
             ESP_LOGI(TAG, "rx: %s", line); // debug incoming stratum messages
             STRATUM_V1_parse(&stratum_api_v1_message, line);
             free(line);
@@ -201,11 +201,14 @@ void stratum_task(void * pvParameters)
                 }
             }
         }
-
-        if (GLOBAL_STATE->sock != -1) {
+        if (is_tls) {
+            esp_tls_conn_destroy(GLOBAL_STATE->sock.tls_socket);
+        }
+        else if (GLOBAL_STATE->sock.tcp_socket != -1)
+        {
             ESP_LOGE(TAG, "Shutting down socket and restarting...");
-            shutdown(GLOBAL_STATE->sock, 0);
-            close(GLOBAL_STATE->sock);
+            shutdown(GLOBAL_STATE->sock.tcp_socket, 0);
+            close(GLOBAL_STATE->sock.tcp_socket);
         }
     }
     vTaskDelete(NULL);
