@@ -9,4 +9,6 @@ INCLUDE_DIRS
 REQUIRES 
     json
     mbedtls
+    esp-tls
+    esp_timer
 )

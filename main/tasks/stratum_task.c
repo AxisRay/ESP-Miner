@@ -2,12 +2,14 @@
 // #include "addr_from_stdin.h"
 #include "connect.h"
 #include "lwip/dns.h"
+#include "lwip/sockets.h"
 #include "work_queue.h"
 #include "bm1397.h"
 #include "global_state.h"
 #include "stratum_task.h"
 #include "nvs_config.h"
 #include <esp_sntp.h>
+#include <esp_tls.h>
 #include <time.h>
 
 #define PORT CONFIG_STRATUM_PORT
@@ -30,6 +32,50 @@ void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *callback_arg)
     ip_Addr = *ipaddr;
     bDNSFound = true;
 }
+int stratum_tcp_connect(stratum_socket *sock, char *host_ip, uint16_t port)
+{
+    int addr_family = 0;
+    int ip_protocol = 0;
+
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = inet_addr(host_ip);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(port);
+    addr_family = AF_INET;
+    ip_protocol = IPPROTO_IP;
+
+    sock->is_tls = false;
+    sock->tcp_socket = socket(addr_family, SOCK_STREAM, ip_protocol);
+    if (sock->tcp_socket < 0) {
+        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        return -1;
+    }
+    ESP_LOGI(TAG, "Socket created, connecting to %s:%d", host_ip, port);
+
+    int err = connect(sock->tcp_socket, (struct sockaddr *) &dest_addr, sizeof(struct sockaddr_in6));
+    if (err != 0) {
+        ESP_LOGE(TAG, "Socket unable to connect: errno %d", err);
+        return err;
+    }
+    return 0;
+}
+int stratum_tls_connect(stratum_socket *sock, char *hostname, uint16_t port, esp_tls_cfg_t *cfg)
+{
+    sock->is_tls = true;
+    sock->tls_socket = esp_tls_init();
+    if (sock->tls_socket == NULL) {
+        ESP_LOGE(TAG, "Unable to create TLS socket");
+        return -1;
+    }
+    ESP_LOGI(TAG, "TLS Socket created, connecting to %s:%d", hostname, port);
+
+    int err = esp_tls_conn_new_sync(hostname, strlen(hostname), port, cfg, sock->tls_socket);
+    if (err != 1) {
+        ESP_LOGE(TAG, "TLS Socket unable to connect: errno %d", err);
+        return err;
+    }
+    return 0;
+}
 
 void stratum_task(void *pvParameters)
 {
@@ -42,6 +88,8 @@ void stratum_task(void *pvParameters)
 
     char *stratum_url = nvs_config_get_string(NVS_CONFIG_STRATUM_URL, STRATUM_URL);
     uint16_t port = nvs_config_get_u16(NVS_CONFIG_STRATUM_PORT, PORT);
+    uint8_t is_tls = nvs_config_get_u16(NVS_CONFIG_STRATUM_TLS, false);
+    char *stratum_cert = nvs_config_get_string(NVS_CONFIG_STRATUM_CERT, NULL);
 
     // check to see if the STRATUM_URL is an ip address already
     if (inet_pton(AF_INET, stratum_url, &ip_Addr) == 1)
@@ -49,7 +97,7 @@ void stratum_task(void *pvParameters)
         bDNSFound = true;
     }
     else
-    {
+    {        
         // it's a hostname. Lookup the ip address.
         IP_ADDR4(&ip_Addr, 0, 0, 0, 0);
         ESP_LOGI(TAG, "Get IP for URL: %s\n", stratum_url);
@@ -65,32 +113,35 @@ void stratum_task(void *pvParameters)
              ip4_addr3(&ip_Addr.u_addr.ip4),
              ip4_addr4(&ip_Addr.u_addr.ip4));
     ESP_LOGI(TAG, "Connecting to: stratum+tcp://%s:%d (%s)\n", stratum_url, port, host_ip);
-    free(stratum_url);
+    //tls need it to verify the server certificate
+    //free(stratum_url);
 
     while (1)
     {
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_addr.s_addr = inet_addr(host_ip);
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_port = htons(port);
-        addr_family = AF_INET;
-        ip_protocol = IPPROTO_IP;
-
-        GLOBAL_STATE->sock = socket(addr_family, SOCK_STREAM, ip_protocol);
-        if (GLOBAL_STATE->sock < 0)
-        {
-            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-            esp_restart();
-            break;
+        if (is_tls) {
+            esp_tls_cfg_t cfg = {
+                .cacert_pem_buf = (const unsigned char *) stratum_cert,
+                .cacert_pem_bytes = strlen(stratum_cert) + 1,
+            };
+            ESP_LOGI(TAG, "TLS cert: %s", stratum_cert);
+            ESP_LOGI(TAG, "TLS cert length: %d", strlen(stratum_cert) + 1);
+            int err = stratum_tls_connect(&GLOBAL_STATE->sock, stratum_url, port, &cfg);
+            if (err != 0)
+            {
+                ESP_LOGE(TAG, "TLS Socket unable to connect: errno %d", err);
+                esp_restart();
+                break;
+            }
         }
-        ESP_LOGI(TAG, "Socket created, connecting to %s:%d", host_ip, port);
-
-        int err = connect(GLOBAL_STATE->sock, (struct sockaddr *)&dest_addr, sizeof(struct sockaddr_in6));
-        if (err != 0)
+        else
         {
-            ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
-            esp_restart();
-            break;
+            int err = stratum_tcp_connect(&GLOBAL_STATE->sock, host_ip, port);
+            if (err != 0)
+            {
+                ESP_LOGE(TAG, "TCP Socket unable to connect: errno %d", err);
+                esp_restart();
+                break;
+            }
         }
 
         STRATUM_V1_subscribe(GLOBAL_STATE->sock, &GLOBAL_STATE->extranonce_str, &GLOBAL_STATE->extranonce_2_len,
@@ -107,7 +158,7 @@ void stratum_task(void *pvParameters)
 
         STRATUM_V1_suggest_difficulty(GLOBAL_STATE->sock, STRATUM_DIFFICULTY);
 
-        while (1)
+        while (1) 
         {
             char *line = STRATUM_V1_receive_jsonrpc_line(GLOBAL_STATE->sock);
             ESP_LOGI(TAG, "rx: %s", line); // debug incoming stratum messages
@@ -169,12 +220,15 @@ void stratum_task(void *pvParameters)
                 }
             }
         }
-
-        if (GLOBAL_STATE->sock != -1)
+        if (is_tls)
+        {
+            esp_tls_conn_destroy(GLOBAL_STATE->sock.tls_socket);
+        }
+        else if (GLOBAL_STATE->sock.tcp_socket != -1)
         {
             ESP_LOGE(TAG, "Shutting down socket and restarting...");
-            shutdown(GLOBAL_STATE->sock, 0);
-            close(GLOBAL_STATE->sock);
+            shutdown(GLOBAL_STATE->sock.tcp_socket, 0);
+            close(GLOBAL_STATE->sock.tcp_socket);
         }
     }
     vTaskDelete(NULL);

@@ -23,6 +23,8 @@ export interface ISystemInfo {
     stratumURL: string,
     stratumPort: number,
     stratumUser: string,
+    stratumTLS: number,
+    stratumCert: string,
     frequency: number,
     version: string,
     invertfanpolarity: number,

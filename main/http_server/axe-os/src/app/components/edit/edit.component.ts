@@ -58,6 +58,8 @@ export class EditComponent implements OnInit {
             Validators.max(65353)
           ]],
           stratumUser: [info.stratumUser, [Validators.required]],
+          stratumTLS: [info.stratumTLS == 1],
+          stratumCert: [info.stratumCert],
           ssid: [info.ssid, [Validators.required]],
           wifiPass: [info.wifiPass, [Validators.required]],
           coreVoltage: [info.coreVoltage, [Validators.required]],
