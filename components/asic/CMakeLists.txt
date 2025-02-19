@@ -15,6 +15,7 @@ REQUIRES
     "freertos"
     "driver"
     "stratum"
+    "tcp_transport"
 )
 
 
