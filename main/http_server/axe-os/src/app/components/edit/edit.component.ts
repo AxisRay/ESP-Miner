@@ -1,6 +1,6 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, Input, OnInit, OnDestroy } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { FormBuilder, FormGroup, Validators, ValidatorFn, ValidationErrors, AbstractControl } from '@angular/forms';
 import { ToastrService } from 'ngx-toastr';
 import { startWith, Subject, takeUntil } from 'rxjs';
 import { LoadingService } from 'src/app/services/loading.service';
@@ -150,6 +150,8 @@ export class EditComponent implements OnInit, OnDestroy {
             Validators.min(0),
             Validators.max(65353)
           ]],
+          stratumTLS: [info.stratumTLS == 1],
+          stratumCert: [info.stratumCert],
           fallbackStratumURL: [info.fallbackStratumURL, [
             Validators.pattern(/^(?!.*stratum\+tcp:\/\/).*$/),
           ]],
@@ -159,6 +161,8 @@ export class EditComponent implements OnInit, OnDestroy {
             Validators.min(0),
             Validators.max(65353)
           ]],
+          fallbackStratumTLS: [info.fallbackStratumTLS == 1],
+          fallbackStratumCert: [info.fallbackStratumCert],
           stratumUser: [info.stratumUser, [Validators.required]],
           stratumPassword: ['*****', [Validators.required]],
           fallbackStratumUser: [info.fallbackStratumUser, [Validators.required]],
@@ -181,6 +185,35 @@ export class EditComponent implements OnInit, OnDestroy {
             this.form.controls['fanspeed'].enable();
           }
         });
+
+        // Setup conditional validation for stratumCert
+        this.form.controls['stratumTLS'].valueChanges.pipe(
+          startWith(this.form.controls['stratumTLS'].value),
+          takeUntil(this.destroy$)
+        ).subscribe(stratumTLS => {
+          const certControl = this.form.controls['stratumCert'];
+          if (stratumTLS) {
+            certControl.setValidators([Validators.required, this.pemCertificateValidator()]);
+          } else {
+            certControl.setValidators(null);
+          }
+          certControl.updateValueAndValidity();
+        });
+
+        // Add after the previous stratumTLS subscription
+        this.form.controls['fallbackStratumTLS'].valueChanges.pipe(
+          startWith(this.form.controls['fallbackStratumTLS'].value),
+          takeUntil(this.destroy$)
+        ).subscribe(fallbackStratumTLS => {
+          const certControl = this.form.controls['fallbackStratumCert'];
+          if (fallbackStratumTLS) {
+            certControl.setValidators([Validators.required, this.pemCertificateValidator()]);
+          } else {
+            certControl.setValidators(null);
+          }
+          certControl.updateValueAndValidity();
+        });
+
       });
   }
 
@@ -312,6 +345,15 @@ export class EditComponent implements OnInit, OnDestroy {
     }
 
     return options;
+  }
+
+  private pemCertificateValidator(): ValidatorFn {
+    return (control: AbstractControl): ValidationErrors | null => {
+      if (!control.value?.trim()) return null;
+      
+      const pemRegex = /^-----BEGIN CERTIFICATE-----\s*([\s\S]*?)\s*-----END CERTIFICATE-----$/;
+      return pemRegex.test(control.value?.trim()) ? null : { invalidCertificate: true };
+    };
   }
 
 }
