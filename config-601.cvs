@@ -1,8 +1,8 @@
 key,type,encoding,value
 main,namespace,,
 hostname,data,string,bitaxe
-wifissid,data,string,myssid
-wifipass,data,string,password
+wifissid,data,string,
+wifipass,data,string,
 stratumurl,data,string,public-pool.io
 stratumport,data,u16,21496
 stratumtls,data,u16,0

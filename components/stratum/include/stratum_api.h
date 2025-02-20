@@ -65,7 +65,7 @@ typedef struct
 
 esp_transport_handle_t STRATUM_V1_transport_init(bool is_tls, char * cert);
 
-esp_err_t STRATUM_V1_transport_connect(char * host, int port, esp_transport_handle_t transport);
+esp_err_t STRATUM_V1_transport_connect(const char * host, int port, esp_transport_handle_t transport);
 
 esp_err_t STRATUM_V1_transport_close(esp_transport_handle_t transport);
 
@@ -75,20 +75,20 @@ void STRATUM_V1_initialize_buffer();
 
 char *STRATUM_V1_receive_jsonrpc_line(esp_transport_handle_t transport);
 
-int STRATUM_V1_subscribe(esp_transport_handle_t transport, char * model);
+int STRATUM_V1_subscribe(esp_transport_handle_t transport, int send_uid, char * model);
 
 void STRATUM_V1_parse(StratumApiV1Message *message, const char *stratum_json);
 
 void STRATUM_V1_free_mining_notify(mining_notify *params);
 
-int STRATUM_V1_authenticate(esp_transport_handle_t transport, const char *username, const char *pass);
+int STRATUM_V1_authenticate(esp_transport_handle_t transport, int send_uid, const char *username, const char *pass);
 
-int STRATUM_V1_configure_version_rolling(esp_transport_handle_t transport, uint32_t * version_mask);
+int STRATUM_V1_configure_version_rolling(esp_transport_handle_t transport, int send_uid, uint32_t * version_mask);
 
-int STRATUM_V1_suggest_difficulty(esp_transport_handle_t transport, uint32_t difficulty);
+int STRATUM_V1_suggest_difficulty(esp_transport_handle_t transport, int send_uid, uint32_t difficulty);
 
-int STRATUM_V1_submit_share(esp_transport_handle_t transport, const char *username, const char *jobid,
-                             const char *extranonce_2, const uint32_t ntime, const uint32_t nonce,
-                             const uint32_t version);
+int STRATUM_V1_submit_share(esp_transport_handle_t transport, int send_uid, const char *username, const char *jobid,
+                            const char *extranonce_2, const uint32_t ntime, const uint32_t nonce,
+                            const uint32_t version);
 
 #endif // STRATUM_API_H

@@ -29,6 +29,9 @@
 
 #define MAX_RETRY_ATTEMPTS 3
 #define MAX_CRITICAL_RETRY_ATTEMPTS 5
+#define TRANSPORT_TIMEOUT_MS 5000
+
+#define BUFFER_SIZE 1024
 
 static const char * TAG = "stratum_task";
 
@@ -62,6 +65,12 @@ void cleanQueue(GlobalState * GLOBAL_STATE) {
     pthread_mutex_unlock(&GLOBAL_STATE->valid_jobs_lock);
 }
 
+void stratum_reset_uid(GlobalState * GLOBAL_STATE)
+{
+    ESP_LOGI(TAG, "Resetting stratum uid");
+    GLOBAL_STATE->send_uid = 1;
+}
+
 void stratum_close_connection(GlobalState * GLOBAL_STATE)
 {
     ESP_LOGE(TAG, "Shutting down socket and restarting...");
@@ -74,7 +83,7 @@ void stratum_primary_heartbeat(void * pvParameters)
 {
     GlobalState * GLOBAL_STATE = (GlobalState *) pvParameters;
 
-    ESP_LOGI(TAG, "Starting heartbeat thread for primary endpoint: %s", primary_stratum_url);
+    ESP_LOGI(TAG, "Starting heartbeat thread for primary pool: %s:%d", primary_stratum_url, primary_stratum_port);
     vTaskDelay(10000 / portTICK_PERIOD_MS);
 
     while (1)
@@ -101,22 +110,37 @@ void stratum_primary_heartbeat(void * pvParameters)
             continue;
         }
         esp_err_t err = STRATUM_V1_transport_connect(primary_stratum_url, primary_stratum_port, transport);
-        if (err != 0)
+        if (err != 0) 
         {
             ESP_LOGD(TAG, "Heartbeat. Failed connect check: %s:%d (errno %d: %s)", primary_stratum_url, primary_stratum_port, errno, strerror(errno));
             STRATUM_V1_transport_close(transport);
             vTaskDelay(60000 / portTICK_PERIOD_MS);
             continue;
         }
+
+        int send_uid = 1;
+        STRATUM_V1_subscribe(transport, send_uid++, GLOBAL_STATE->asic_model_str);
+        STRATUM_V1_authenticate(transport, send_uid++, GLOBAL_STATE->SYSTEM_MODULE.pool_user, GLOBAL_STATE->SYSTEM_MODULE.pool_pass);
+
+        char recv_buffer[BUFFER_SIZE];
+        memset(recv_buffer, 0, BUFFER_SIZE);
+        int bytes_received = esp_transport_read(transport, recv_buffer, BUFFER_SIZE - 1, TRANSPORT_TIMEOUT_MS); 
+
         STRATUM_V1_transport_close(transport);
 
-        if (GLOBAL_STATE->SYSTEM_MODULE.is_using_fallback) {
-            ESP_LOGI(TAG, "Heartbeat successful and in fallback mode. Switching back to primary.");
-            GLOBAL_STATE->SYSTEM_MODULE.is_using_fallback = false;
-            stratum_close_connection(GLOBAL_STATE);
+        if (bytes_received == -1)  {
             vTaskDelay(60000 / portTICK_PERIOD_MS);
             continue;
         }
+        STRATUM_V1_transport_close(transport);
+
+        if (strstr(recv_buffer, "mining.notify") != NULL) {
+            ESP_LOGI(TAG, "Heartbeat successful and in fallback mode. Switching back to primary.");
+            GLOBAL_STATE->SYSTEM_MODULE.is_using_fallback = false;
+            stratum_close_connection(GLOBAL_STATE);
+            continue;
+        }
+
         vTaskDelay(60000 / portTICK_PERIOD_MS);
     }
 }
@@ -137,16 +161,13 @@ void stratum_task(void * pvParameters)
     STRATUM_V1_initialize_buffer();
     int retry_attempts = 0;
     int retry_critical_attempts = 0;
-    struct timeval timeout = {};
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
 
-    xTaskCreate(stratum_primary_heartbeat, "stratum primary heartbeat", 4096, pvParameters, 1, NULL);
+    xTaskCreate(stratum_primary_heartbeat, "stratum primary heartbeat", 8192, pvParameters, 1, NULL);
 
+    ESP_LOGI(TAG, "Opening connection to pool: %s:%d", stratum_url, port);
     while (1) {
         if (!is_wifi_connected()) {
             ESP_LOGI(TAG, "WiFi disconnected, attempting to reconnect...");
-            esp_wifi_connect();
             vTaskDelay(10000 / portTICK_PERIOD_MS);
             continue;
         }
@@ -193,30 +214,25 @@ void stratum_task(void * pvParameters)
             vTaskDelay(5000 / portTICK_PERIOD_MS);
             continue;
         }
-        retry_attempts = 0;
 
-        // mining.subscribe
-        // STRATUM_V1_subscribe(GLOBAL_STATE->transport, &GLOBAL_STATE->extranonce_str, &GLOBAL_STATE->extranonce_2_len,
-        //                      GLOBAL_STATE->asic_model);
-
-        STRATUM_V1_reset_uid();
+        stratum_reset_uid(GLOBAL_STATE);
         cleanQueue(GLOBAL_STATE);
 
         ///// Start Stratum Action
         // mining.configure - ID: 1
-        STRATUM_V1_configure_version_rolling(GLOBAL_STATE->transport, &GLOBAL_STATE->version_mask);
+        STRATUM_V1_configure_version_rolling(GLOBAL_STATE->transport, GLOBAL_STATE->send_uid++, &GLOBAL_STATE->version_mask);
 
         // mining.subscribe - ID: 2
-        STRATUM_V1_subscribe(GLOBAL_STATE->transport, GLOBAL_STATE->asic_model_str);
+        STRATUM_V1_subscribe(GLOBAL_STATE->transport, GLOBAL_STATE->send_uid++, GLOBAL_STATE->asic_model_str);
 
         char * username = GLOBAL_STATE->SYSTEM_MODULE.is_using_fallback ? GLOBAL_STATE->SYSTEM_MODULE.fallback_pool_user : GLOBAL_STATE->SYSTEM_MODULE.pool_user;
         char * password = GLOBAL_STATE->SYSTEM_MODULE.is_using_fallback ? GLOBAL_STATE->SYSTEM_MODULE.fallback_pool_pass : GLOBAL_STATE->SYSTEM_MODULE.pool_pass;
 
         //mining.authorize - ID: 3
-        STRATUM_V1_authenticate(GLOBAL_STATE->transport, username, password);
+        STRATUM_V1_authenticate(GLOBAL_STATE->transport, GLOBAL_STATE->send_uid++, username, password);
 
         //mining.suggest_difficulty - ID: 4
-        STRATUM_V1_suggest_difficulty(GLOBAL_STATE->transport, STRATUM_DIFFICULTY);
+        STRATUM_V1_suggest_difficulty(GLOBAL_STATE->transport, GLOBAL_STATE->send_uid++, STRATUM_DIFFICULTY);
 
         // Everything is set up, lets make sure we don't abandon work unnecessarily.
         GLOBAL_STATE->abandon_work = 0;
@@ -225,9 +241,11 @@ void stratum_task(void * pvParameters)
             char * line = STRATUM_V1_receive_jsonrpc_line(GLOBAL_STATE->transport);
             if (!line) {
                 ESP_LOGE(TAG, "Failed to receive JSON-RPC line, reconnecting...");
+                retry_attempts++;
                 stratum_close_connection(GLOBAL_STATE);
                 break;
             }
+
             ESP_LOGI(TAG, "rx: %s", line); // debug incoming stratum messages
             STRATUM_V1_parse(&stratum_api_v1_message, line);
             free(line);
@@ -271,6 +289,8 @@ void stratum_task(void * pvParameters)
                     SYSTEM_notify_rejected_share(GLOBAL_STATE);
                 }
             } else if (stratum_api_v1_message.method == STRATUM_RESULT_SETUP) {
+                // Reset retry attempts after successfully receiving data.
+                retry_attempts = 0;
                 if (stratum_api_v1_message.response_success) {
                     ESP_LOGI(TAG, "setup message accepted");
                 } else {

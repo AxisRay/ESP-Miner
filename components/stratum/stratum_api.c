@@ -23,19 +23,8 @@ static const char * TAG = "stratum_api";
 static char * json_rpc_buffer = NULL;
 static size_t json_rpc_buffer_size = 0;
 
-// A message ID that must be unique per request that expects a response.
-// For requests not expecting a response (called notifications), this is null.
-static int send_uid = 1;
-
 static void debug_stratum_tx(const char *);
 int _parse_stratum_subscribe_result_message(const char * result_json_str, char ** extranonce, int * extranonce2_len);
-
-void STRATUM_V1_reset_uid()
-{
-    ESP_LOGI(TAG, "Resetting stratum uid");
-
-    send_uid = 1;
-}
 
 esp_transport_handle_t STRATUM_V1_transport_init(bool is_tls, char * cert)
 {
@@ -52,7 +41,7 @@ esp_transport_handle_t STRATUM_V1_transport_init(bool is_tls, char * cert)
     return transport;
 }
 
-esp_err_t STRATUM_V1_transport_connect(char * host, int port, esp_transport_handle_t transport)
+esp_err_t STRATUM_V1_transport_connect(const char * host, int port, esp_transport_handle_t transport)
 {
     esp_err_t ret = esp_transport_connect(transport, host, port, TRANSPORT_TIMEOUT_MS);
     return ret;
@@ -350,31 +339,31 @@ int _parse_stratum_subscribe_result_message(const char * result_json_str, char *
     return 0;
 }
 
-int STRATUM_V1_subscribe(esp_transport_handle_t transport, char * model)
+int STRATUM_V1_subscribe(esp_transport_handle_t transport, int send_uid, char * model)
 {
     // Subscribe
     char subscribe_msg[BUFFER_SIZE];
     const esp_app_desc_t *app_desc = esp_app_get_description();
-    const char *version = app_desc->version;
-    sprintf(subscribe_msg, "{\"id\": %d, \"method\": \"mining.subscribe\", \"params\": [\"bitaxe/%s/%s\"]}\n", send_uid++, model, version);
+    const char *version = app_desc->version;	
+    sprintf(subscribe_msg, "{\"id\": %d, \"method\": \"mining.subscribe\", \"params\": [\"bitaxe/%s/%s\"]}\n", send_uid, model, version);
     debug_stratum_tx(subscribe_msg);
 
     return esp_transport_write(transport, subscribe_msg, strlen(subscribe_msg), TRANSPORT_TIMEOUT_MS);
 }
 
-int STRATUM_V1_suggest_difficulty(esp_transport_handle_t transport, uint32_t difficulty)
+int STRATUM_V1_suggest_difficulty(esp_transport_handle_t transport, int send_uid, uint32_t difficulty)
 {
     char difficulty_msg[BUFFER_SIZE];
-    sprintf(difficulty_msg, "{\"id\": %d, \"method\": \"mining.suggest_difficulty\", \"params\": [%ld]}\n", send_uid++, difficulty);
+    sprintf(difficulty_msg, "{\"id\": %d, \"method\": \"mining.suggest_difficulty\", \"params\": [%ld]}\n", send_uid, difficulty);
     debug_stratum_tx(difficulty_msg);
 
     return esp_transport_write(transport, difficulty_msg, strlen(difficulty_msg), TRANSPORT_TIMEOUT_MS);
 }
 
-int STRATUM_V1_authenticate(esp_transport_handle_t transport, const char * username, const char * pass)
+int STRATUM_V1_authenticate(esp_transport_handle_t transport, int send_uid, const char * username, const char * pass)
 {
     char authorize_msg[BUFFER_SIZE];
-    sprintf(authorize_msg, "{\"id\": %d, \"method\": \"mining.authorize\", \"params\": [\"%s\", \"%s\"]}\n", send_uid++, username,
+    sprintf(authorize_msg, "{\"id\": %d, \"method\": \"mining.authorize\", \"params\": [\"%s\", \"%s\"]}\n", send_uid, username,
             pass);
     debug_stratum_tx(authorize_msg);
 
@@ -387,25 +376,26 @@ int STRATUM_V1_authenticate(esp_transport_handle_t transport, const char * usern
 /// @param ntime The hex-encoded time value use in the block header.
 /// @param extranonce_2 The hex-encoded value of extra nonce 2.
 /// @param nonce The hex-encoded nonce value to use in the block header.
-int STRATUM_V1_submit_share(esp_transport_handle_t transport, const char * username, const char * jobid, const char * extranonce_2, const uint32_t ntime,
-                              const uint32_t nonce, const uint32_t version)
+int STRATUM_V1_submit_share(esp_transport_handle_t transport, int send_uid, const char * username, const char * jobid, 
+                            const char * extranonce_2, const uint32_t ntime,
+                            const uint32_t nonce, const uint32_t version)
 {
     char submit_msg[BUFFER_SIZE];
     sprintf(submit_msg,
             "{\"id\": %d, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%08lx\", \"%08lx\", \"%08lx\"]}\n",
-            send_uid++, username, jobid, extranonce_2, ntime, nonce, version);
+            send_uid, username, jobid, extranonce_2, ntime, nonce, version);
     debug_stratum_tx(submit_msg);
 
     return esp_transport_write(transport, submit_msg, strlen(submit_msg), TRANSPORT_TIMEOUT_MS);
 }
 
-int STRATUM_V1_configure_version_rolling(esp_transport_handle_t transport, uint32_t * version_mask)
+int STRATUM_V1_configure_version_rolling(esp_transport_handle_t transport, int send_uid, uint32_t * version_mask)
 {
     char configure_msg[BUFFER_SIZE * 2];
     sprintf(configure_msg,
             "{\"id\": %d, \"method\": \"mining.configure\", \"params\": [[\"version-rolling\"], {\"version-rolling.mask\": "
             "\"ffffffff\"}]}\n",
-            send_uid++);
+            send_uid);
     debug_stratum_tx(configure_msg);
 
     return esp_transport_write(transport, configure_msg, strlen(configure_msg), TRANSPORT_TIMEOUT_MS);

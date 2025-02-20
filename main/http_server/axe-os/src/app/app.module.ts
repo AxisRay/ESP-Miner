@@ -11,6 +11,7 @@ import { ToastrModule } from 'ngx-toastr';
 import { AppRoutingModule } from './app-routing.module';
 import { AppComponent } from './app.component';
 import { EditComponent } from './components/edit/edit.component';
+import { PoolComponent } from './components/pool/pool.component';
 import { NetworkEditComponent } from './components/network-edit/network.edit.component';
 import { HomeComponent } from './components/home/home.component';
 import { LoadingComponent } from './components/loading/loading.component';
@@ -27,6 +28,9 @@ import { HashSuffixPipe } from './pipes/hash-suffix.pipe';
 import { PrimeNGModule } from './prime-ng.module';
 import { MessageModule } from 'primeng/message';
 import { TooltipModule } from 'primeng/tooltip';
+import { DialogModule } from 'primeng/dialog';
+import { DynamicDialogModule, DialogService as PrimeDialogService } from 'primeng/dynamicdialog';
+import { DialogService, DialogListComponent } from './services/dialog.service';
 
 const components = [
   AppComponent,
@@ -36,7 +40,8 @@ const components = [
   LoadingComponent,
   NetworkComponent,
   SettingsComponent,
-  LogsComponent
+  LogsComponent,
+  PoolComponent
 ];
 
 @NgModule({
@@ -49,7 +54,9 @@ const components = [
     SettingsComponent,
     HashSuffixPipe,
     ThemeConfigComponent,
-    DesignComponent
+    DesignComponent,
+    PoolComponent,
+    DialogListComponent
   ],
   imports: [
     BrowserModule,
@@ -65,10 +72,14 @@ const components = [
     PrimeNGModule,
     AppLayoutModule,
     MessageModule,
-    TooltipModule
+    TooltipModule,
+    DialogModule,
+    DynamicDialogModule
   ],
   providers: [
     { provide: LocationStrategy, useClass: HashLocationStrategy },
+    DialogService,
+    PrimeDialogService
   ],
   bootstrap: [AppComponent]
 })
